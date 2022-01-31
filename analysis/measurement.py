@@ -1,9 +1,9 @@
-from typing import Tuple, Optional, List
+from typing import Tuple, List
 
 import numpy as np
 from pandas import DataFrame
 
-from data import filter, utils
+from data import utils
 from data.tdms_reader import read_tdms, Columns, Channels
 from . import TimeSeries
 from common.units import *
@@ -21,7 +21,6 @@ class Measurement:
     # Measurement types
     THRUST_TEST_N2 = 0
     THRUST_TEST_H20 = 1
-    HEATER_POWER_CORRECTION = 2
 
     def __init__(self, filename: str, type: int, description: Optional[str] = None,
                  constant_mass_flow: Optional[Number] = None,
