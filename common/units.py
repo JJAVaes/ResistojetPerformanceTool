@@ -43,18 +43,50 @@ class SI:
                 else:
                     raise ValueError(f"Unit must be one of {self._units}, not \"{key}\".")
 
-    def get_prefix(self, oom: int):
-        """Get the order of magnitude prefix."""
-        supported_oom = [-6, -3, 0, 3, 6]
-        if oom not in supported_oom:
-            raise ValueError(f"Order of magnitude not supported: {oom}")
-        prefixes = ["u", "m", "", "k", "M"]
-        for unit, count in zip(SI._units, self.unit_count):
-            if count == 0:
-                continue
-            if count == 1:
-                pass  # TODO
-        return dict(zip(supported_oom, prefixes))[oom]
+    @staticmethod
+    def __int_to_superscript(nr: int):
+        """Converts an integer to a string superscript of that integer"""
+        super_str = '' if nr >= 0 else '⁻'
+        for i in str(abs(nr)):
+            i = int(i)
+            if i == 1:
+                super_str += chr(0x00b9)
+            elif 2 <= i <= 3:
+                super_str += chr(0x00b0 + i)
+            else:
+                super_str += chr(0x2070 + i)
+        return super_str
+
+    def get_unit_str(self, oom: int) -> str:
+        """
+        Get the string representation incorporating the order of magnitude.
+        Examples:
+            0.01 W = 10 mW -> mW
+            10000 m = 10 km -> km
+            0.05 kg = 50 g -> g
+            0.0001 m² = 100 mm² -> mm²
+            0.01 m³ = 10 10⁶mm³ -> 10⁶mm³
+        """
+        unit_str = self.__str__()
+        leading_unit_count = next(filter(lambda x: x != 0, self.unit_count))
+        if unit_str.startswith("kg"):
+            unit_str = unit_str[1:]
+            oom += 3 * leading_unit_count
+
+        unit_oom = int(oom // leading_unit_count // 3) * 3  # 3 for kilo, -6 for micro etc.
+        total_oom = unit_oom * leading_unit_count  # Reduction in oom for used unit
+        remaining_oom = oom - total_oom
+        oom_power_str = ''
+        if remaining_oom > 1:
+            oom_power_str = '10' + self.__int_to_superscript(remaining_oom)
+
+        supported_oom = [-9, -6, -3, 0, 3, 6, 9]
+        if unit_oom not in supported_oom:
+            raise ValueError(f"Order of magnitude not supported: {unit_oom}")
+
+        prefixes = ["n", "u", "m", "", "k", "M", "G"]
+        prefix = prefixes[supported_oom.index(unit_oom)]
+        return f"[{oom_power_str}{prefix}{unit_str}]"
 
     def __eq__(self, other: 'SI'):
         return all([i == j for i, j in zip(self.unit_count, other.unit_count)])
@@ -87,7 +119,8 @@ class SI:
             if count == 1:
                 s.append(f"{unit}")
             else:
-                s.append(f"{unit}{count}")
+                power_str = self.__int_to_superscript(count)
+                s.append(f"{unit}{power_str}")
         return " ".join(s)
 
     def __repr__(self):
@@ -174,9 +207,10 @@ class BaseUnit(object):
         return gauss(self.x, self.error / 3)
 
     def __oom(self) -> int:
-        """Returns the order of magnitude of the value. Value is in [-6, -3, 0, 3, 6]"""
-        oom = int(math.log10(abs(self.x)) // 3 * 3)
-        return min(6, max(-6, oom))
+        """Returns the order of magnitude of the value."""
+        if self.x == 0:
+            return 0
+        return int(math.log10(abs(self.x)) // 3 * 3)
 
     def __eq__(self, other: 'BaseUnit'):
         if not isinstance(other, BaseUnit):
@@ -249,12 +283,12 @@ class BaseUnit(object):
 
     def __str__(self):
         p = 0 if self.error == 0 else 1
-        return_str = f"{self.x} "
-        if not isinstance(self, Dimensionless):
-            return_str += f"{self.units} "
-        return return_str + f"(±{self.error_percentage:.{p}f}%, ±{self.error})"
-        # oom = self.__oom()
-        # return f"{self.x / 10 ** oom} {self.units.get_prefix(oom)}{self.units}"
+        if isinstance(self, Dimensionless):
+            return f"{self.x:.3E} (±{self.error_percentage:.{p}f}%, ±{self.error:.3E})"
+
+        oom = self.__oom()
+        oom_unit_str = self.units.get_unit_str(oom)
+        return f"{self.x/10**oom:.3f} {oom_unit_str} (±{self.error_percentage:.{p}f}%, ±{self.error/10**oom:.3f} {oom_unit_str})"
 
     def __repr__(self):
         if BaseUnit.get_type(self.units) == BaseUnit:
@@ -290,12 +324,6 @@ class Length(BaseUnit):
     @classmethod
     def from_um(cls, x: float, error: float = 0):
         return cls(x, error=error, _factor=1E-6)
-
-    def __str__(self):
-        if self.x < 1E2:
-            return super().__str__() + f" ({self.get_mm():.6f} mm)"
-        else:
-            return super().__str__()
 
 
 class Mass(BaseUnit):
@@ -333,16 +361,9 @@ class Area(BaseUnit):
     def from_mm2(cls, x: float, error: float = 0):
         return cls(x, error=error, _factor=1E-6)
 
-    def __str__(self):
-        if self.x < 1E4:
-            return super().__str__() + f" ({self.get_mm2():.6f} mm2)"
-        else:
-            return super().__str__()
-
 
 class Volume(BaseUnit):
     units = SI({"m": 3})
-    name = "m3"
 
     def get_cm3(self):
         return self.x * 1E6
@@ -370,13 +391,9 @@ class MassFlow(BaseUnit):
     def from_mgps(cls, x: float, error: float = 0):
         return cls(x, error=error, _factor=1E-6)
 
-    def __str__(self):
-        return super().__str__() + f" ({self.get_mgps():.4f} mg/s)"
-
 
 class VolumetricFlow(BaseUnit):
-    units = SI({"m3": 1, "s": -1})
-    name = "m3/s"
+    units = SI({"m": 3, "s": -1})
 
 
 class Speed(BaseUnit):
@@ -398,9 +415,6 @@ class Force(BaseUnit):
     @classmethod
     def from_mN(cls, x: float, error: float = 0):
         return cls(x, error=error, _factor=1E-3)
-
-    def __str__(self):
-        return super().__str__() + f" ({self.get_mN():.2f} mN)"
 
 
 class Joule(BaseUnit):
@@ -443,8 +457,7 @@ class Pressure(BaseUnit):
 
 
 class Density(BaseUnit):
-    units = SI({"kg": 1, "m3": -1})
-    name = "kg/m3"
+    units = SI({"kg": 1, "m": -3})
 
     @classmethod
     def from_gpcm3(cls, x: float, error: float = 0):
@@ -477,17 +490,14 @@ class Frequency(BaseUnit):
 
 class SpecificEnergy(BaseUnit):
     units = SI({"J": 1, "kg": -1})
-    name = "J/kg"
 
 
 class SpecificHeatCapacity(BaseUnit):
     units = SI({"J": 1, "kg": -1, "K": -1})
-    name = "J/(kg*K)"
 
 
 class MolarSpecificHeatCapacity(BaseUnit):
     units = SI({"J": 1, "mol": -1, "K": -1})
-    name = "J/(mol*K)"
 
 
 class Viscosity(BaseUnit):
@@ -504,7 +514,6 @@ class MolarMass(BaseUnit):
 
 class HeatCapacity(BaseUnit):
     units = SI(J=1, K=-1)
-    name = "J/K"
 
 
 class Percentage(float):
